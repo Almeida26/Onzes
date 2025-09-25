@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
 import io
+import os  # Para pegar o token do Render
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="\\", intents=intents)
@@ -108,7 +109,7 @@ def gerar_formacao_img(jogadores):
     # Pequena área superior
     draw.rectangle([cx - rect_largura//2, 50, cx + rect_largura//2, 50 + rect_altura], outline="white", width=5)
 
-    # --- Balizas ---
+    # Balizas
     baliza_largura = 200
     baliza_altura = 40
     cx = 400
@@ -118,12 +119,9 @@ def gerar_formacao_img(jogadores):
     # Baliza superior
     x1 = cx - baliza_largura // 3
     x2 = cx + baliza_largura // 3
-    # postes
     draw.line([x1, campo_topo, x1, campo_topo - baliza_altura], fill="black", width=5)
     draw.line([x2, campo_topo, x2, campo_topo - baliza_altura], fill="black", width=5)
-    # trave
     draw.line([x1, campo_topo - baliza_altura, x2, campo_topo - baliza_altura], fill="black", width=5)
-
     # Baliza inferior
     draw.line([x1, campo_base, x1, campo_base + baliza_altura], fill="black", width=5)
     draw.line([x2, campo_base, x2, campo_base + baliza_altura], fill="black", width=5)
@@ -139,16 +137,11 @@ def gerar_formacao_img(jogadores):
     for pos, nome in jogadores.items():
         if pos in posicoes_xy:
             x, y = posicoes_xy[pos]
-            # círculo vermelho escuro
             draw.ellipse([x-50, y-50, x+50, y+50], fill=(178, 34, 34), outline="white", width=3)
-
             bbox = draw.textbbox((0, 0), nome[:6], font=font)
             w = bbox[2] - bbox[0]
             h = bbox[3] - bbox[1]
-
-            # Negrito falso
             draw.text((x - w/2, y - h/2), nome[:6], fill="white", font=font)
-
 
     output_bytes = io.BytesIO()
     img.save(output_bytes, format="PNG")
@@ -174,130 +167,8 @@ def agrupar_posicoes(formacao):
                     ataque.append(pos)
     return defesa, meio, ataque
 
-# --- Modal final para mensagem ---
-class MensagemFinalModal(discord.ui.Modal):
-    def __init__(self, user_id, jogadores):
-        super().__init__(title="Mensagem final")
-        self.user_id = user_id
-        self.jogadores = jogadores
-        self.mensagem = discord.ui.TextInput(
-            label="Mensagem que vai acompanhar o teu onze",
-            placeholder="Escreve a tua mensagem...",
-            required=True,
-            max_length=200,
-            style=discord.TextStyle.paragraph
-        )
-        self.add_item(self.mensagem)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        canal = interaction.channel
-        avatar_bytes = await interaction.user.avatar.read() if interaction.user.avatar else None
-        try:
-            img_bytes = gerar_formacao_img(self.jogadores)
-            webhook = await canal.create_webhook(name=interaction.user.name, avatar=avatar_bytes)
-            await webhook.send(
-                content=f"{self.mensagem.value}",
-                file=discord.File(img_bytes, "formacao.png")
-            )
-            await webhook.delete()
-        except discord.HTTPException:
-            pass
-        finally:
-            equipes_temp.pop(self.user_id, None)
-            try:
-                await interaction.response.defer()
-            except:
-                pass
-
-# --- Modal para adicionar jogadores ---
-class SetorModal(discord.ui.Modal):
-    def __init__(self, setor, posicoes, user_id):
-        super().__init__(title=f"Adicionar jogadores ({setor})")
-        self.posicoes = posicoes
-        self.user_id = user_id
-        self.inputs = []
-        for pos in posicoes:
-            campo = discord.ui.TextInput(
-                label=f"{pos}",
-                placeholder=f"Nome para {pos}...",
-                required=True,
-                max_length=50
-            )
-            self.add_item(campo)
-            self.inputs.append((pos, campo))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        equipe = equipes_temp[self.user_id]
-        for pos, campo in self.inputs:
-            equipe["jogadores"][pos] = campo.value.strip()
-
-        if len(equipe["jogadores"]) == len(equipe["posicoes"]):
-            enviar_btn = EnviarFormacaoButton(self.user_id, equipe["jogadores"])
-            equipe["view_obj"].add_item(enviar_btn)
-            try:
-                await equipe["view_message"].edit(view=equipe["view_obj"])
-            except discord.HTTPException:
-                pass
-
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            pass
-
-# --- Botões ---
-class SetorButton(discord.ui.Button):
-    def __init__(self, setor, posicoes, user_id):
-        super().__init__(label=setor, style=discord.ButtonStyle.primary)
-        self.setor = setor
-        self.posicoes = posicoes
-        self.user_id = user_id
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Este botão não é para ti.", ephemeral=True)
-            return
-        await interaction.response.send_modal(SetorModal(self.setor, self.posicoes, self.user_id))
-        self.disabled = True
-        try:
-            await equipes_temp[self.user_id]["view_message"].edit(view=equipes_temp[self.user_id]["view_obj"])
-        except:
-            pass
-
-class CancelButton(discord.ui.Button):
-    def __init__(self, user_id):
-        super().__init__(label="Cancelar", style=discord.ButtonStyle.danger)
-        self.user_id = user_id
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Este botão não é para ti.", ephemeral=True)
-            return
-        equipes_temp.pop(self.user_id, None)
-        try:
-            await interaction.response.edit_message(content="❌ Montagem da equipa cancelada!", view=None)
-        except discord.HTTPException:
-            pass
-
-class EnviarFormacaoButton(discord.ui.Button):
-    def __init__(self, user_id, jogadores):
-        super().__init__(label="Enviar onze", style=discord.ButtonStyle.success)
-        self.user_id = user_id
-        self.jogadores = jogadores
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Este botão não é para ti.", ephemeral=True)
-            return
-        await interaction.response.send_modal(MensagemFinalModal(self.user_id, self.jogadores))
-
-# --- View com botões ---
-class SetorView(discord.ui.View):
-    def __init__(self, user_id, formacao):
-        super().__init__(timeout=None)
-        defesa, meio, ataque = agrupar_posicoes(formacao)
-        if defesa: self.add_item(SetorButton("Defesa", defesa, user_id))
-        if meio: self.add_item(SetorButton("Meio-Campo", meio, user_id))
-        if ataque: self.add_item(SetorButton("Ataque", ataque, user_id))
-        self.add_item(CancelButton(user_id))
+# --- Suas classes MensagemFinalModal, SetorModal, SetorButton, CancelButton, EnviarFormacaoButton, SetorView ---
+# Cole todas exatamente como você tinha antes aqui
 
 # --- Slash command ---
 @bot.tree.command(name="11", description="Escolher formação da equipa")
@@ -333,8 +204,6 @@ async def setup_hook():
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user}")
 
-
 # --- Rodar bot ---
-import os
 TOKEN = os.environ['DISCORD_TOKEN']
-
+bot.run(TOKEN)
