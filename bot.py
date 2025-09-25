@@ -335,4 +335,6 @@ async def on_ready():
 
 
 # --- Rodar bot ---
-bot.run("MTQxODI2OTYxNjgxOTQwNDg2MQ.GYYGJF.5sggBFjTkn9n24zhgyYUJhj3JzjjxL9pU6dDxE")
+import os
+TOKEN = os.environ['DISCORD_TOKEN']
+
